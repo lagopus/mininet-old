@@ -1374,6 +1374,142 @@ class IVSSwitch( Switch ):
         return self.cmd( 'ovs-ofctl ' + ' '.join( args ) +
                          ' tcp:127.0.0.1:%i' % self.listenPort )
 
+class Lagopus( Switch ):
+    def __init__( self, name, failMode='secure', datapath='kernel',
+                  inband=False, protocols=None,
+                  reconnectms=1000, stp=False, **params ):
+        """name: name for switch
+           failMode: controller loss behavior (secure|open)
+           datapath: userspace or kernel mode (kernel|user)
+           inband: use in-band control (False)
+           protocols: use specific OpenFlow version(s) (e.g. OpenFlow13)
+                                  Unspecified (or old OVS version) uses OVS default
+           reconnectms: max reconnect timeout in ms (0/None for default)
+           stp: enable STP (False, requires failMode=standalone)"""
+        Switch.__init__( self, name, **params )
+        self.failMode = failMode
+        # self.datapath = datapath
+        # self.inband = inband
+        # self.protocols = protocols
+        # self.reconnectms = reconnectms
+        # self.stp = stp
+
+        self.confName = None
+        self.lagopusCmd = None
+        self.workDir = "/tmp/"
+
+    @classmethod
+    def setup( cls ):
+        """from OVSSwitch"""
+        "Make sure Lagopus is installed"
+        pathCheck("lagopus", moduleName="Lagopus (http://lagopus.github.io)")
+
+    @classmethod
+    def batchShutdown( cls, switches ):
+        """from OVSSwitch"""
+        for s in switches:
+            s.killProcess()
+            s.deleteConf()
+            s.lagopusCmd = None
+            s.confName = None
+
+    def dpctl( self, *args ):
+        """from OVSSwitch"""
+
+        return "Not Implemented!!\n"
+
+        # raise NotImplementedError
+
+    @staticmethod
+    def TCReapply( intf ):
+        """from OVSSwitch"""
+        raise NotImplementedError
+
+    def attach( self, intf ):
+        """from OVSSwitch"""
+        raise NotImplementedError
+
+    def detach( self, intf ):
+        """from OVSSwitch"""
+        raise NotImplementedError
+
+    def controllerUUIDs( self, update=False ):
+        """from OVSSwitch"""
+        raise NotImplementedError
+
+    def connected( self ):
+        """from OVSSwitch"""
+        raise NotImplementedError
+
+    @staticmethod
+    def patchOpts( intf ):
+        """from OVSSwitch"""
+        raise NotImplementedError
+
+    def start( self, controllers ):
+        """from OVSSwitch"""
+        "Create config file and Start Lagopus"
+        channels_cmd = ""
+        controllers_cmd = ""
+        interfaces_cmd = ""
+        ports_cmd = ""
+        bridge_cmd = "bridge bridge0 create "
+
+        # Construct interface and port commands
+        for intf in self.intfList():
+            if not (self.ports[intf] and not intf.IP()):
+                continue
+            interfaces_cmd += "interface %s-i create -type ethernet-rawsock -device %s -port-number %d\n\n" % (intf, intf, self.ports[intf])
+            ports_cmd += "port %s-p create -interface %s-i\n\n" % (intf, intf)
+            bridge_cmd += "-port %s-p %s " % (intf, self.ports[intf])
+
+        # Construct controller commands
+        for c in controllers:
+            channels_cmd += "channel %s-c create -dst-addr %s -dst-port %s -protocol %s\n\n" % (c, c.IP(), c.port, c.protocol)
+            controllers_cmd += "controller %s create -channel %s-c -role equal -connection-type main\n\n" % (c, c)
+            bridge_cmd += "-controller %s " % c
+
+        # Construct optional commands
+        bridge_cmd += "-dpid %s " % self.dpid
+        bridge_cmd += "-fail-mode %s " % self.failMode
+
+        # Combine constructed commands, and create a config file
+        conf = "\n\n".join([
+            channels_cmd,
+            controllers_cmd,
+            interfaces_cmd,
+            ports_cmd,
+            bridge_cmd,
+            "bridge bridge0 enable\n"
+        ])
+        self.confName = self.workDir+"%s.conf" % self
+        with open(self.confName, "w") as f:
+            f.write(conf)
+
+        # Create a command for starting Lagopus
+        self.lagopusCmd = "lagopus -l %slog_lagopus-%s.txt -C %s --" % (self.workDir, self.name, self.confName)
+
+        # Kill previous process(same command process) if exists
+        self.killProcess()
+
+        # Start Lagopus with created config file
+        self.cmd(self.lagopusCmd)
+
+    def stop( self, deleteIntfs=True ):
+        """from OVSSwitch"""
+        self.killProcess()
+        self.deleteConf()
+        self.lagopusCmd = None
+        self.confName = None
+        super( Lagopus, self ).stop( deleteIntfs )
+
+    def killProcess(self):
+        if self.lagopusCmd:
+            self.cmd("pkill -f '%s'" % self.lagopusCmd)
+
+    def deleteConf(self):
+        if self.confName:
+            self.cmd("rm %s" % self.confName)
 
 class Controller( Node ):
     """A Controller is a Node that is running (or has execed?) an
