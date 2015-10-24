@@ -25,15 +25,16 @@ from mininet.cli import CLI
 from mininet.log import lg, LEVELS, info, debug, warn, error
 from mininet.net import Mininet, MininetWithControlNet, VERSION
 from mininet.node import ( Host, CPULimitedHost, Controller, OVSController,
-                           RYU, NOX, RemoteController, findController,
-                           DefaultController,
+                           Ryu, NOX, RemoteController, findController,
+                           DefaultController, NullController,
                            UserSwitch, OVSSwitch, OVSBridge,
-                           OVSLegacyKernelSwitch, IVSSwitch )
+                           IVSSwitch )
 from mininet.nodelib import LinuxBridge
 from mininet.link import Link, TCLink, OVSLink
-from mininet.topo import SingleSwitchTopo, LinearTopo, SingleSwitchReversedTopo
+from mininet.topo import ( SingleSwitchTopo, LinearTopo,
+                           SingleSwitchReversedTopo, MinimalTopo )
 from mininet.topolib import TreeTopo, TorusTopo
-from mininet.util import customConstructor, splitArgs
+from mininet.util import customClass, specialClass, splitArgs
 from mininet.util import buildTopo
 
 from functools import partial
@@ -49,7 +50,7 @@ PLACEMENT = { 'block': SwitchBinPlacer, 'random': RandomPlacer }
 
 # built in topologies, created only when run
 TOPODEF = 'minimal'
-TOPOS = { 'minimal': lambda: SingleSwitchTopo( k=2 ),
+TOPOS = { 'minimal': MinimalTopo,
           'linear': LinearTopo,
           'reversed': SingleSwitchReversedTopo,
           'single': SingleSwitchTopo,
@@ -62,24 +63,24 @@ SWITCHES = { 'user': UserSwitch,
              'ovsbr' : OVSBridge,
              # Keep ovsk for compatibility with 2.0
              'ovsk': OVSSwitch,
-             'ovsl': OVSLegacyKernelSwitch,
              'ivs': IVSSwitch,
              'lxbr': LinuxBridge,
              'default': OVSSwitch }
 
 HOSTDEF = 'proc'
 HOSTS = { 'proc': Host,
-          'rt': partial( CPULimitedHost, sched='rt' ),
-          'cfs': partial( CPULimitedHost, sched='cfs' ) }
+          'rt': specialClass( CPULimitedHost, defaults=dict( sched='rt' ) ),
+          'cfs': specialClass( CPULimitedHost, defaults=dict( sched='cfs' ) ) }
 
 CONTROLLERDEF = 'default'
+
 CONTROLLERS = { 'ref': Controller,
                 'ovsc': OVSController,
                 'nox': NOX,
                 'remote': RemoteController,
-                'ryu': RYU,
+                'ryu': Ryu,
                 'default': DefaultController,  # Note: replaced below
-                'none': lambda name: None }
+                'none': NullController }
 
 LINKDEF = 'default'
 LINKS = { 'default': Link,
@@ -97,24 +98,21 @@ ALTSPELLING = { 'pingall': 'pingAll',
                 'iperfUDP': 'iperfUdp' }
 
 
-def addDictOption( opts, choicesDict, default, name, helpStr=None ):
+def addDictOption( opts, choicesDict, default, name, **kwargs ):
     """Convenience function to add choices dicts to OptionParser.
        opts: OptionParser instance
        choicesDict: dictionary of valid choices, must include default
        default: default choice key
        name: long option name
-       help: string"""
-    if default not in choicesDict:
-        raise Exception( 'Invalid  default %s for choices dict: %s' %
-                         ( default, name ) )
-    if not helpStr:
-        helpStr = ( '|'.join( sorted( choicesDict.keys() ) ) +
-                    '[,param=value...]' )
-    opts.add_option( '--' + name,
-                     type='string',
-                     default = default,
-                     help = helpStr )
-
+       kwargs: additional arguments to add_option"""
+    helpStr = ( '|'.join( sorted( choicesDict.keys() ) ) +
+                '[,param=value...]' )
+    helpList = [ '%s=%s' % ( k, v.__name__ )
+                 for k, v in choicesDict.items() ]
+    helpStr += ' ' + ( ' '.join( helpList ) )
+    params = dict( type='string', default=default, help=helpStr )
+    params.update( **kwargs )
+    opts.add_option( '--' + name, **params )
 
 def version( *_args ):
     "Print Mininet version and exit"
@@ -160,7 +158,7 @@ class MininetRunner( object ):
 
     def setCustom( self, name, value ):
         "Set custom parameters for MininetRunner."
-        if name in ( 'topos', 'switches', 'hosts', 'controllers' ):
+        if name in ( 'topos', 'switches', 'hosts', 'controllers', 'links' ):
             # Update dictionaries
             param = name.upper()
             globals()[ param ].update( value )
@@ -199,7 +197,7 @@ class MininetRunner( object ):
         opts = OptionParser( description=desc, usage=usage )
         addDictOption( opts, SWITCHES, SWITCHDEF, 'switch' )
         addDictOption( opts, HOSTS, HOSTDEF, 'host' )
-        addDictOption( opts, CONTROLLERS, CONTROLLERDEF, 'controller' )
+        addDictOption( opts, CONTROLLERS, [], 'controller', action='append' )
         addDictOption( opts, LINKS, LINKDEF, 'link' )
         addDictOption( opts, TOPOS, TOPODEF, 'topo' )
 
@@ -240,7 +238,7 @@ class MininetRunner( object ):
                          default=False, help="pin hosts to CPU cores "
                          "(requires --host cfs or --host rt)" )
         opts.add_option( '--nat', action='callback', callback=self.setNat,
-                         help="adds a NAT to the topology that"
+                         help="[option=val...] adds a NAT to the topology that"
                          " connects Mininet hosts to the physical network."
                          " Warning: This may route any traffic on the machine"
                          " that uses Mininet's"
@@ -293,28 +291,28 @@ class MininetRunner( object ):
 
         start = time.time()
 
-        if self.options.controller == 'default':
+        if not self.options.controller:
             # Update default based on available controllers
             CONTROLLERS[ 'default' ] = findController()
-            if CONTROLLERS[ 'default' ] is None:
+            self.options.controller = [ 'default' ]
+            if not CONTROLLERS[ 'default' ]:
+                self.options.controller = [ 'none' ]
                 if self.options.switch == 'default':
                     info( '*** No default OpenFlow controller found '
                           'for default switch!\n' )
                     info( '*** Falling back to OVS Bridge\n' )
                     self.options.switch = 'ovsbr'
-                    self.options.controller = 'none'
-                elif self.options.switch in ( 'ovsbr', 'lxbr' ):
-                    self.options.controller = 'none'
-                else:
+                elif self.options.switch not in ( 'ovsbr', 'lxbr' ):
                     raise Exception( "Could not find a default controller "
                                      "for switch %s" %
                                      self.options.switch )
 
         topo = buildTopo( TOPOS, self.options.topo )
-        switch = customConstructor( SWITCHES, self.options.switch )
-        host = customConstructor( HOSTS, self.options.host )
-        controller = customConstructor( CONTROLLERS, self.options.controller )
-        link = customConstructor( LINKS, self.options.link )
+        switch = customClass( SWITCHES, self.options.switch )
+        host = customClass( HOSTS, self.options.host )
+        controller = [ customClass( CONTROLLERS, c )
+                       for c in self.options.controller ]
+        link = customClass( LINKS, self.options.link )
 
         if self.validate:
             self.validate( self.options )

@@ -23,20 +23,26 @@ Switch: superclass for switch nodes.
 UserSwitch: a switch using the user-space switch from the OpenFlow
     reference implementation.
 
-KernelSwitch: a switch using the kernel switch from the OpenFlow reference
-    implementation.
-
-OVSSwitch: a switch using the OpenVSwitch OpenFlow-compatible switch
+OVSSwitch: a switch using the Open vSwitch OpenFlow-compatible switch
     implementation (openvswitch.org).
+
+OVSBridge: an Ethernet bridge implemented using Open vSwitch.
+    Supports STP.
+
+IVSSwitch: OpenFlow switch using the Indigo Virtual Switch.
 
 Controller: superclass for OpenFlow controllers. The default controller
     is controller(8) from the reference implementation.
 
+OVSController: The test controller from Open vSwitch.
+
 NOXController: a controller node using NOX (noxrepo.org).
+
+Ryu: The Ryu controller (https://osrg.github.io/ryu/)
 
 RemoteController: a remote controller node, which may use any
     arbitrary OpenFlow-compatible controller, and which is not
-    created or managed by mininet.
+    created or managed by Mininet.
 
 Future enhancements:
 
@@ -57,7 +63,7 @@ from time import sleep
 from mininet.log import info, error, warn, debug
 from mininet.util import ( quietRun, errRun, errFail, moveIntf, isShellBuiltin,
                            numCores, retry, mountCgroups )
-from mininet.moduledeps import moduleDeps, pathCheck, OVS_KMOD, OF_KMOD, TUN
+from mininet.moduledeps import moduleDeps, pathCheck, TUN
 from mininet.link import Link, Intf, TCIntf, OVSIntf
 from re import findall
 from distutils.version import StrictVersion
@@ -162,6 +168,8 @@ class Node( object ):
 
     def mountPrivateDirs( self ):
         "mount private directories"
+        # Avoid expanding a string into a list of chars
+        assert not isinstance( self.privateDirs, basestring )
         for directory in self.privateDirs:
             if isinstance( directory, tuple ):
                 # mount given private directory
@@ -507,15 +515,13 @@ class Node( object ):
            mac: MAC address as string"""
         return self.intf( intf ).setMAC( mac )
 
-    def setIP( self, ip, prefixLen=8, intf=None ):
+    def setIP( self, ip, prefixLen=8, intf=None, **kwargs ):
         """Set the IP address for an interface.
            intf: intf or intf name
            ip: IP address as a string
-           prefixLen: prefix length, e.g. 8 for /8 or 16M addrs"""
-        # This should probably be rethought
-        if '/' not in ip:
-            ip = '%s/%s' % ( ip, prefixLen )
-        return self.intf( intf ).setIP( ip )
+           prefixLen: prefix length, e.g. 8 for /8 or 16M addrs
+           kwargs: any additional arguments for intf.setIP"""
+        return self.intf( intf ).setIP( ip, prefixLen, **kwargs )
 
     def IP( self, intf=None ):
         "Return IP address of a node or specific interface."
@@ -675,7 +681,9 @@ class CPULimitedHost( Host ):
         "Clean up our cgroup"
         # info( '*** deleting cgroup', self.cgroup, '\n' )
         _out, _err, exitcode = errRun( 'cgdelete -r ' + self.cgroup )
-        return exitcode == 0  # success condition
+        # Sometimes cgdelete returns a resource busy error but still
+        # deletes the group; next attempt will give "no such file"
+        return exitcode == 0  or ( 'no such file' in _err.lower() )
 
     def popen( self, *args, **kwargs ):
         """Return a Popen() object in node's namespace
@@ -697,7 +705,7 @@ class CPULimitedHost( Host ):
     def cleanup( self ):
         "Clean up Node, then clean up our cgroup"
         super( CPULimitedHost, self ).cleanup()
-        retry( retries=3, delaySecs=1, fn=self.cgroupDel )
+        retry( retries=3, delaySecs=.1, fn=self.cgroupDel )
 
     _rtGroupSched = False   # internal class var: Is CONFIG_RT_GROUP_SCHED set?
 
@@ -897,6 +905,12 @@ class Switch( Node ):
         debug( 'Assuming', repr( self ), 'is connected to a controller\n' )
         return True
 
+    def stop( self, deleteIntfs=True ):
+        """Stop switch
+           deleteIntfs: delete interfaces? (True)"""
+        if deleteIntfs:
+            self.deleteIntfs()
+
     def __repr__( self ):
         "More informative string representation"
         intfs = ( ','.join( [ '%s:%s' % ( i.name, i.IP() )
@@ -1002,56 +1016,6 @@ class UserSwitch( Switch ):
         self.cmd( 'kill %ofdatapath' )
         self.cmd( 'kill %ofprotocol' )
         super( UserSwitch, self ).stop( deleteIntfs )
-
-class OVSLegacyKernelSwitch( Switch ):
-    """Open VSwitch legacy kernel-space switch using ovs-openflowd.
-       Currently only works in the root namespace."""
-
-    def __init__( self, name, dp=None, **kwargs ):
-        """Init.
-           name: name for switch
-           dp: netlink id (0, 1, 2, ...)
-           defaultMAC: default MAC as unsigned int; random value if None"""
-        Switch.__init__( self, name, **kwargs )
-        self.dp = dp if dp else self.name
-        self.intf = self.dp
-        if self.inNamespace:
-            error( "OVSKernelSwitch currently only works"
-                   " in the root namespace.\n" )
-            exit( 1 )
-
-    @classmethod
-    def setup( cls ):
-        "Ensure any dependencies are loaded; if not, try to load them."
-        pathCheck( 'ovs-dpctl', 'ovs-openflowd',
-                   moduleName='Open vSwitch (openvswitch.org)')
-        moduleDeps( subtract=OF_KMOD, add=OVS_KMOD )
-
-    def start( self, controllers ):
-        "Start up kernel datapath."
-        ofplog = '/tmp/' + self.name + '-ofp.log'
-        # Delete local datapath if it exists;
-        # then create a new one monitoring the given interfaces
-        self.cmd( 'ovs-dpctl del-dp ' + self.dp )
-        self.cmd( 'ovs-dpctl add-dp ' + self.dp )
-        intfs = [ str( i ) for i in self.intfList() if not i.IP() ]
-        self.cmd( 'ovs-dpctl', 'add-if', self.dp, ' '.join( intfs ) )
-        # Run protocol daemon
-        clist = ','.join( [ 'tcp:%s:%d' % ( c.IP(), c.port )
-                            for c in controllers ] )
-        self.cmd( 'ovs-openflowd ' + self.dp +
-                  ' ' + clist +
-                  ' --fail=secure ' + self.opts +
-                  ' --datapath-id=' + self.dpid +
-                  ' 1>' + ofplog + ' 2>' + ofplog + '&' )
-        self.execed = False
-
-    def stop( self, deleteIntfs=True ):
-        """Terminate kernel datapath."
-           deleteIntfs: delete interfaces? (True)"""
-        quietRun( 'ovs-dpctl del-dp ' + self.dp )
-        self.cmd( 'kill %ovs-openflowd' )
-        super( OVSLegacyKernelSwitch, self ).stop( deleteIntfs )
 
 
 class OVSSwitch( Switch ):
@@ -1183,7 +1147,7 @@ class OVSSwitch( Switch ):
         if self.protocols and not self.isOldOVS():
             opts += ' protocols=%s' % self.protocols
         if self.stp and self.failMode == 'standalone':
-            opts += ' stp_enable=true' % self
+            opts += ' stp_enable=true'
         return opts
 
     def start( self, controllers ):
@@ -1289,11 +1253,14 @@ OVSKernelSwitch = OVSSwitch
 class OVSBridge( OVSSwitch ):
     "OVSBridge is an OVSSwitch in standalone/bridge mode"
 
-    def __init__( self, args, **kwargs ):
+    def __init__( self, *args, **kwargs ):
+        """stp: enable Spanning Tree Protocol (False)
+           see OVSSwitch for other options"""
         kwargs.update( failMode='standalone' )
-        OVSSwitch.__init__( self, args, **kwargs )
+        OVSSwitch.__init__( self, *args, **kwargs )
 
     def start( self, controllers ):
+        "Start bridge, ignoring controllers argument"
         OVSSwitch.start( self, controllers=[] )
 
     def connected( self ):
@@ -1517,7 +1484,7 @@ class Controller( Node ):
 
     def __init__( self, name, inNamespace=False, command='controller',
                   cargs='-v ptcp:%d', cdir=None, ip="127.0.0.1",
-                  port=6633, protocol='tcp', **params ):
+                  port=6653, protocol='tcp', **params ):
         self.command = command
         self.cargs = cargs
         self.cdir = cdir
@@ -1624,7 +1591,7 @@ class NOX( Controller ):
                              cdir=noxCoreDir,
                              **kwargs )
 
-class RYU( Controller ):
+class Ryu( Controller ):
     "Controller to run Ryu application"
     def __init__( self, name, *ryuArgs, **kwargs ):
         """Init.
@@ -1646,11 +1613,12 @@ class RYU( Controller ):
                              cdir=ryuCoreDir,
                              **kwargs )
 
+
 class RemoteController( Controller ):
     "Controller running outside of Mininet's control."
 
     def __init__( self, name, ip='127.0.0.1',
-                  port=6633, **kwargs):
+                  port=None, **kwargs):
         """Init.
            name: name to give controller
            ip: the IP address where the remote controller is
@@ -1668,12 +1636,30 @@ class RemoteController( Controller ):
 
     def checkListening( self ):
         "Warn if remote controller is not accessible"
-        listening = self.cmd( "echo A | telnet -e A %s %d" %
-                              ( self.ip, self.port ) )
+        if self.port is not None:
+            self.isListening( self.ip, self.port )
+        else:
+            for port in 6653, 6633:
+                if self.isListening( self.ip, port ):
+                    self.port = port
+                    info( "Connecting to remote controller"
+                          " at %s:%d\n" % ( self.ip, self.port ))
+                    break
+
+        if self.port is None:
+            self.port = 6653
+            warn( "Setting remote controller"
+                  " to %s:%d\n" % ( self.ip, self.port ))
+
+    def isListening( self, ip, port ):
+        "Check if a remote controller is listening at a specific ip and port"
+        listening = self.cmd( "echo A | telnet -e A %s %d" % ( ip, port ) )
         if 'Connected' not in listening:
             warn( "Unable to contact the remote controller"
-                  " at %s:%d\n" % ( self.ip, self.port ) )
-
+                  " at %s:%d\n" % ( ip, port ) )
+            return False
+        else:
+            return True
 
 DefaultControllers = ( Controller, OVSController )
 
@@ -1689,3 +1675,7 @@ def DefaultController( name, controllers=DefaultControllers, **kwargs ):
     if not controller:
         raise Exception( 'Could not find a default OpenFlow controller' )
     return controller( name, **kwargs )
+
+def NullController( *_args, **_kwargs ):
+    "Nonexistent controller - simply returns None"
+    return None

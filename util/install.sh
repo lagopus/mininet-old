@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Mininet install script for Ubuntu (and Debian Lenny)
+# Mininet install script for Ubuntu (and Debian Wheezy+)
 # Brandon Heller (brandonh@stanford.edu)
 
 # Fail on error
@@ -102,7 +102,10 @@ OF13_SWITCH_REV=${OF13_SWITCH_REV:-""}
 function kernel {
     echo "Install Mininet-compatible kernel if necessary"
     sudo apt-get update
-    $install linux-image-$KERNEL_NAME
+    if ! $install linux-image-$KERNEL_NAME; then
+        echo "Could not install linux-image-$KERNEL_NAME"
+        echo "Skipping - assuming installed kernel is OK."
+    fi
 }
 
 function kernel_clean {
@@ -189,17 +192,24 @@ function of13 {
     fi
 
     # Install netbee
-    NBEESRC="nbeesrc-jan-10-2013"
+    if [ "$DIST" = "Ubuntu" ] && version_ge $RELEASE 14.04; then
+        NBEESRC="nbeesrc-feb-24-2015"
+        NBEEDIR="netbee"
+    else
+        NBEESRC="nbeesrc-jan-10-2013"
+        NBEEDIR="nbeesrc-jan-10-2013"
+    fi
+
     NBEEURL=${NBEEURL:-http://www.nbee.org/download/}
     wget -nc ${NBEEURL}${NBEESRC}.zip
     unzip ${NBEESRC}.zip
-    cd ${NBEESRC}/src
+    cd ${NBEEDIR}/src
     cmake .
     make
     cd $BUILD_DIR/
-    sudo cp ${NBEESRC}/bin/libn*.so /usr/local/lib
+    sudo cp ${NBEEDIR}/bin/libn*.so /usr/local/lib
     sudo ldconfig
-    sudo cp -R ${NBEESRC}/include/ /usr/
+    sudo cp -R ${NBEEDIR}/include/ /usr/
 
     # Resume the install:
     cd $BUILD_DIR/ofsoftswitch13
@@ -258,53 +268,63 @@ function ubuntuOvs {
     OVS_SRC=$BUILD_DIR/openvswitch
     OVS_TARBALL_LOC=http://openvswitch.org/releases
 
-    if [ "$DIST" = "Ubuntu" ] && version_ge $RELEASE 12.04; then
-        rm -rf $OVS_SRC
-        mkdir -p $OVS_SRC
-        cd $OVS_SRC
+    if ! echo "$DIST" | egrep "Ubuntu|Debian" > /dev/null; then
+        echo "OS must be Ubuntu or Debian"
+        $cd BUILD_DIR
+        return
+    fi
+    if [ "$DIST" = "Ubuntu" ] && ! version_ge $RELEASE 12.04; then
+        echo "Ubuntu version must be >= 12.04"
+        cd $BUILD_DIR
+        return
+    fi
+    if [ "$DIST" = "Debian" ] && ! version_ge $RELEASE 7.0; then
+        echo "Debian version must be >= 7.0"
+        cd $BUILD_DIR
+        return
+    fi
 
-        if wget $OVS_TARBALL_LOC/openvswitch-$OVS_RELEASE.tar.gz 2> /dev/null; then
-            tar xzf openvswitch-$OVS_RELEASE.tar.gz
-        else
-            echo "Failed to find OVS at $OVS_TARBALL_LOC/openvswitch-$OVS_RELEASE.tar.gz"
-            cd $BUILD_DIR
-            return
-        fi
+    rm -rf $OVS_SRC
+    mkdir -p $OVS_SRC
+    cd $OVS_SRC
 
-        # Remove any old packages
-        $remove openvswitch-common openvswitch-datapath-dkms openvswitch-controller \
-                openvswitch-pki openvswitch-switch
-
-        # Get build deps
-        $install build-essential fakeroot debhelper autoconf automake libssl-dev \
-                 pkg-config bzip2 openssl python-all procps python-qt4 \
-                 python-zopeinterface python-twisted-conch dkms
-
-        # Build OVS
-        cd $BUILD_DIR/openvswitch/openvswitch-$OVS_RELEASE
-                DEB_BUILD_OPTIONS='parallel=2 nocheck' fakeroot debian/rules binary
-        cd ..
-        $pkginst openvswitch-common_$OVS_RELEASE*.deb openvswitch-datapath-dkms_$OVS_RELEASE*.deb \
-                 openvswitch-pki_$OVS_RELEASE*.deb openvswitch-switch_$OVS_RELEASE*.deb
-        if $pkginst openvswitch-controller_$OVS_RELEASE*.deb; then
-            echo "Ignoring error installing openvswitch-controller"
-        fi
-
-        modinfo openvswitch
-        sudo ovs-vsctl show
-        # Switch can run on its own, but
-        # Mininet should control the controller
-        # This appears to only be an issue on Ubuntu/Debian
-        if sudo service openvswitch-controller stop; then
-            echo "Stopped running controller"
-        fi
-        if [ -e /etc/init.d/openvswitch-controller ]; then
-            sudo update-rc.d openvswitch-controller disable
-        fi
+    if wget $OVS_TARBALL_LOC/openvswitch-$OVS_RELEASE.tar.gz 2> /dev/null; then
+        tar xzf openvswitch-$OVS_RELEASE.tar.gz
     else
-        echo "Failed to install Open vSwitch.  OS must be Ubuntu >= 12.04"
-            cd $BUILD_DIR
-            return
+        echo "Failed to find OVS at $OVS_TARBALL_LOC/openvswitch-$OVS_RELEASE.tar.gz"
+        cd $BUILD_DIR
+        return
+    fi
+
+    # Remove any old packages
+    $remove openvswitch-common openvswitch-datapath-dkms openvswitch-controller \
+            openvswitch-pki openvswitch-switch
+
+    # Get build deps
+    $install build-essential fakeroot debhelper autoconf automake libssl-dev \
+             pkg-config bzip2 openssl python-all procps python-qt4 \
+             python-zopeinterface python-twisted-conch dkms
+
+    # Build OVS
+    cd $BUILD_DIR/openvswitch/openvswitch-$OVS_RELEASE
+            DEB_BUILD_OPTIONS='parallel=2 nocheck' fakeroot debian/rules binary
+    cd ..
+    $pkginst openvswitch-common_$OVS_RELEASE*.deb openvswitch-datapath-dkms_$OVS_RELEASE*.deb \
+             openvswitch-pki_$OVS_RELEASE*.deb openvswitch-switch_$OVS_RELEASE*.deb
+    if $pkginst openvswitch-controller_$OVS_RELEASE*.deb; then
+        echo "Ignoring error installing openvswitch-controller"
+    fi
+
+    modinfo openvswitch
+    sudo ovs-vsctl show
+    # Switch can run on its own, but
+    # Mininet should control the controller
+    # This appears to only be an issue on Ubuntu/Debian
+    if sudo service openvswitch-controller stop; then
+        echo "Stopped running controller"
+    fi
+    if [ -e /etc/init.d/openvswitch-controller ]; then
+        sudo update-rc.d openvswitch-controller disable
     fi
 }
 
@@ -319,14 +339,17 @@ function ovs {
         return
     fi
 
-    # Manually installing openvswitch-datapath may be necessary
-    # for manually built kernel .debs using Debian's defective kernel
-    # packaging, which doesn't yield usable headers.
-    if ! dpkg --get-selections | grep openvswitch-datapath; then
-        # If you've already installed a datapath, assume you
-        # know what you're doing and don't need dkms datapath.
-        # Otherwise, install it.
-        $install openvswitch-datapath-dkms
+    if [ "$DIST" = "Ubuntu" ] && ! version_ge $RELEASE 14.04; then
+        # Older Ubuntu versions need openvswitch-datapath/-dkms
+        # Manually installing openvswitch-datapath may be necessary
+        # for manually built kernel .debs using Debian's defective kernel
+        # packaging, which doesn't yield usable headers.
+        if ! dpkg --get-selections | grep openvswitch-datapath; then
+            # If you've already installed a datapath, assume you
+            # know what you're doing and don't need dkms datapath.
+            # Otherwise, install it.
+            $install openvswitch-datapath-dkms
+        fi
     fi
 
     $install openvswitch-switch
@@ -343,7 +366,7 @@ function ovs {
     else
         echo "Attempting to install openvswitch-testcontroller"
         if ! $install openvswitch-testcontroller; then
-            echo "Failed - giving up"
+            echo "Failed - skipping openvswitch-testcontroller"
         fi
     fi
 
@@ -567,7 +590,7 @@ net.ipv6.conf.lo.disable_ipv6 = 1' | sudo tee -a /etc/sysctl.conf > /dev/null
     # Since the above doesn't disable neighbor discovery, also do this:
     if ! grep 'ipv6.disable' /etc/default/grub; then
         sudo sed -i -e \
-        's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1/' \
+        's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1 /' \
         /etc/default/grub
         sudo update-grub
     fi
