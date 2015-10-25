@@ -31,6 +31,8 @@ OVSBridge: an Ethernet bridge implemented using Open vSwitch.
 
 IVSSwitch: OpenFlow switch using the Indigo Virtual Switch.
 
+Lagopus: a switch using the Laogpus OpenFlow switch (https://lagopus.github.io)
+
 Controller: superclass for OpenFlow controllers. The default controller
     is controller(8) from the reference implementation.
 
@@ -1342,24 +1344,11 @@ class IVSSwitch( Switch ):
                          ' tcp:127.0.0.1:%i' % self.listenPort )
 
 class Lagopus( Switch ):
-    def __init__( self, name, failMode='secure', datapath='kernel',
-                  inband=False, protocols=None,
-                  reconnectms=1000, stp=False, **params ):
+    def __init__( self, name, failMode='secure', **params ):
         """name: name for switch
-           failMode: controller loss behavior (secure|open)
-           datapath: userspace or kernel mode (kernel|user)
-           inband: use in-band control (False)
-           protocols: use specific OpenFlow version(s) (e.g. OpenFlow13)
-                                  Unspecified (or old OVS version) uses OVS default
-           reconnectms: max reconnect timeout in ms (0/None for default)
-           stp: enable STP (False, requires failMode=standalone)"""
+           failMode: controller loss behavior (secure|standalone)"""
         Switch.__init__( self, name, **params )
         self.failMode = failMode
-        # self.datapath = datapath
-        # self.inband = inband
-        # self.protocols = protocols
-        # self.reconnectms = reconnectms
-        # self.stp = stp
 
         self.confName = None
         self.lagopusCmd = None
@@ -1367,13 +1356,11 @@ class Lagopus( Switch ):
 
     @classmethod
     def setup( cls ):
-        """from OVSSwitch"""
         "Make sure Lagopus is installed"
         pathCheck("lagopus", moduleName="Lagopus (http://lagopus.github.io)")
 
     @classmethod
     def batchShutdown( cls, switches ):
-        """from OVSSwitch"""
         for s in switches:
             s.killProcess()
             s.deleteConf()
@@ -1381,40 +1368,25 @@ class Lagopus( Switch ):
             s.confName = None
 
     def dpctl( self, *args ):
-        """from OVSSwitch"""
-
         return "Not Implemented!!\n"
-
-        # raise NotImplementedError
 
     @staticmethod
     def TCReapply( intf ):
-        """from OVSSwitch"""
         raise NotImplementedError
 
     def attach( self, intf ):
-        """from OVSSwitch"""
         raise NotImplementedError
 
     def detach( self, intf ):
-        """from OVSSwitch"""
         raise NotImplementedError
 
     def controllerUUIDs( self, update=False ):
-        """from OVSSwitch"""
         raise NotImplementedError
 
     def connected( self ):
-        """from OVSSwitch"""
-        raise NotImplementedError
-
-    @staticmethod
-    def patchOpts( intf ):
-        """from OVSSwitch"""
         raise NotImplementedError
 
     def start( self, controllers ):
-        """from OVSSwitch"""
         "Create config file and Start Lagopus"
         channels_cmd = ""
         controllers_cmd = ""
@@ -1454,7 +1426,7 @@ class Lagopus( Switch ):
             f.write(conf)
 
         # Create a command for starting Lagopus
-        self.lagopusCmd = "lagopus -l %slog_lagopus-%s.txt -C %s --" % (self.workDir, self.name, self.confName)
+        self.lagopusCmd = "lagopus -l %slog_lagopus-%s.txt -C %s" % (self.workDir, self.name, self.confName)
 
         # Kill previous process(same command process) if exists
         self.killProcess()
@@ -1463,7 +1435,6 @@ class Lagopus( Switch ):
         self.cmd(self.lagopusCmd)
 
     def stop( self, deleteIntfs=True ):
-        """from OVSSwitch"""
         self.killProcess()
         self.deleteConf()
         self.lagopusCmd = None
