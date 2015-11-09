@@ -1366,6 +1366,7 @@ class Lagopus( Switch ):
             s.deleteConf()
             s.lagopusCmd = None
             s.confName = None
+        return switches
 
     def dpctl( self, *args ):
         return "Not Implemented!!\n"
