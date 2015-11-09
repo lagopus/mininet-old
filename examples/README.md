@@ -150,6 +150,14 @@ These two examples demonstrate how to create a network by using the lowest-
 level Mininet functions. Generally the higher-level API is easier to use,
 but scratchnet shows what is going on behind the scenes.
 
+#### simplelagopus.py
+
+This example creates a simple network with lagopus switches.
+
+Note: In the mininet, you should avoid performance tests for the lagopus switches,
+because the switches are executed in the rawsocket mode.
+
+
 #### simpleperf.py:
 
 A simple example of configuring network and CPU bandwidth limits.
