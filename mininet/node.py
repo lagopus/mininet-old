@@ -1451,6 +1451,100 @@ class Lagopus( Switch ):
         if self.confName:
             self.cmd("rm %s" % self.confName)
 
+
+class DSLError(Exception):
+
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return repr(self.value)
+
+
+class ds_client:
+
+    port = 12345
+
+    def remove_namespace(self, arg):
+        if isinstance(arg, dict):
+            for a in arg.iterkeys():
+                if isinstance(arg[a], unicode):
+                    arg[a] = re.sub(r'^:([^:])', r'\1', arg[a]);
+                elif isinstance(arg[a], dict):
+                    self.remove_namespace(arg[a])
+                elif isinstance(arg[a], list):
+                    for l in arg[a]:
+                        self.remove_namespace(l)
+
+    def open(self):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.connect(('127.0.0.1', self.port))
+
+    def close(self):
+        del self.sock
+
+    def write(self, arg):
+        self.sock.sendall(arg)
+
+    def is_readable(self):
+        return select.select([self.sock], [], [], 0) == ([self.sock], [], [])
+
+    def read(self):
+        data = ''
+        while True:
+            res = self.sock.recv(8192)
+            data += res
+            if not self.is_readable():
+                try:
+                    jdata = json.loads(data)
+                    self.remove_namespace(jdata)
+                    break
+                except ValueError:
+                    continue
+        return jdata
+
+    def request(self, arg):
+        self.write(arg)
+        jdata = self.read()
+        if jdata['ret'] != 'OK':
+            if 'file' in jdata and 'line' in jdata:
+                raise DSLError(jdata['file'] + ':' + str(jdata['line']) +
+                               ': ' + jdata['ret'] + ': ' + jdata['data'])
+            else:
+                raise DSLError(jdata['ret'] + ': ' + jdata['data'])
+        return jdata['data']
+
+    def lock(self):
+        request('lock\n')
+
+    def unlock(self):
+        request('unlock\n')
+
+    def call(self, arg, response=True):
+        try:
+            self.open()
+        except:
+            raise
+        self.write(arg)
+        if response == True:
+            jdata = self.read()
+            self.close()
+        else:
+            self.close()
+            return
+        if jdata['ret'] != 'OK':
+            if 'file' in jdata and 'line' in jdata:
+                raise DSLError(jdata['file'] + ':' + str(jdata['line']) +
+                               ': ' + jdata['ret'] + ': ' + jdata['data'])
+            else:
+                raise DSLError(jdata['ret'] + ': ' + jdata['data'])
+        try:
+            return jdata['data']
+        except:
+            return
+
+
+
 class Controller( Node ):
     """A Controller is a Node that is running (or has execed?) an
        OpenFlow controller."""
