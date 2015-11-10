@@ -59,6 +59,9 @@ import pty
 import re
 import signal
 import select
+import socket
+import json
+
 from subprocess import Popen, PIPE
 from time import sleep
 
@@ -1348,11 +1351,17 @@ class Lagopus( Switch ):
         """name: name for switch
            failMode: controller loss behavior (secure|standalone)"""
         Switch.__init__( self, name, **params )
+        self.name = name
         self.failMode = failMode
 
-        self.confName = None
-        self.lagopusCmd = None
-        self.workDir = "/tmp/"
+        self.confName = "/tmp/lagopus.dsl"
+
+        if os.system("pgrep ^lagopus$ -l > /dev/null") != 0:
+          os.system('echo "" > %s' % self.confName)
+          os.system('lagopus -C %s' % self.confName)
+        self.ds_client = ds_client()
+
+        self.bridge = None
 
     @classmethod
     def setup( cls ):
@@ -1361,11 +1370,7 @@ class Lagopus( Switch ):
 
     @classmethod
     def batchShutdown( cls, switches ):
-        for s in switches:
-            s.killProcess()
-            s.deleteConf()
-            s.lagopusCmd = None
-            s.confName = None
+        os.system('lagosh -c stop')
         return switches
 
     def dpctl( self, *args ):
@@ -1390,62 +1395,43 @@ class Lagopus( Switch ):
 
     def start( self, controllers ):
         "Create config file and Start Lagopus"
-        channels_cmd = ""
-        controllers_cmd = ""
-        interfaces_cmd = ""
-        ports_cmd = ""
-        bridge_cmd = "bridge bridge0 create "
+
+        if self.bridge != None:
+            self.ds_client.call("bridge %s enable\n" % self.name)
+            return
+
+        self.bridge = self.name
+        bridge_cmd = "bridge %s create " % self.name
 
         # Construct interface and port commands
         for intf in self.intfList():
             if not (self.ports[intf] and not intf.IP()):
                 continue
-            interfaces_cmd += "interface %s-i create -type ethernet-rawsock -device %s -port-number %d\n\n" % (intf, intf, self.ports[intf])
-            ports_cmd += "port %s-p create -interface %s-i\n\n" % (intf, intf)
+            interface_cmd = "interface %s-i create -type ethernet-rawsock -device %s -port-number %d\n" % (intf, intf, self.ports[intf])
+            port_cmd = "port %s-p create -interface %s-i\n" % (intf, intf)
+            self.ds_client.call(interface_cmd)
+            self.ds_client.call(port_cmd)
             bridge_cmd += "-port %s-p %s " % (intf, self.ports[intf])
 
         # Construct controller commands
         for c in controllers:
-            channels_cmd += "channel %s-c create -dst-addr %s -dst-port %s -protocol %s\n\n" % (c, c.IP(), c.port, c.protocol)
-            controllers_cmd += "controller %s create -channel %s-c -role equal -connection-type main\n\n" % (c, c)
-            bridge_cmd += "-controller %s " % c
+            controller_name = "%s-%s" % (c, self.name)
+            channel_name = "%s-c" % (controller_name)
+            channel_cmd = "channel %s create -dst-addr %s -dst-port %s -protocol %s\n" % (channel_name, c.IP(), c.port, c.protocol)
+            controller_cmd = "controller %s create -channel %s -role equal -connection-type main\n" % (controller_name, channel_name)
+            self.ds_client.call(channel_cmd)
+            self.ds_client.call(controller_cmd)
+            bridge_cmd += "-controller %s " % controller_name
 
         # Construct optional commands
         bridge_cmd += "-dpid %s " % self.dpid
-        bridge_cmd += "-fail-mode %s " % self.failMode
-
-        # Combine constructed commands, and create a config file
-        conf = "\n\n".join([
-            channels_cmd,
-            controllers_cmd,
-            interfaces_cmd,
-            ports_cmd,
-            bridge_cmd,
-            "bridge bridge0 enable\n"
-        ])
-        self.confName = self.workDir+"%s.conf" % self
-        with open(self.confName, "w") as f:
-            f.write(conf)
-
-        # Create a command for starting Lagopus
-        self.lagopusCmd = "lagopus -l %slog_lagopus-%s.txt -C %s" % (self.workDir, self.name, self.confName)
-
-        # Kill previous process(same command process) if exists
-        self.killProcess()
-
-        # Start Lagopus with created config file
-        self.cmd(self.lagopusCmd)
+        bridge_cmd += "-fail-mode %s \n" % self.failMode
+        self.ds_client.call(bridge_cmd)
+        self.ds_client.call("bridge %s enable\n" % self.name)
 
     def stop( self, deleteIntfs=True ):
-        self.killProcess()
-        self.deleteConf()
-        self.lagopusCmd = None
-        self.confName = None
+        self.ds_client.call("bridge %s disable\n" % self.name)
         super( Lagopus, self ).stop( deleteIntfs )
-
-    def killProcess(self):
-        if self.lagopusCmd:
-            self.cmd("pkill -f '%s'" % self.lagopusCmd)
 
     def deleteConf(self):
         if self.confName:
