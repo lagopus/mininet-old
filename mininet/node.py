@@ -1369,7 +1369,8 @@ class Lagopus( Switch ):
         return switches
 
     def dpctl( self, *args ):
-        return "Not Implemented!!\n"
+        "Run lagosh command"
+        return self.cmd( 'lagosh -c ' + ' '.join( args ) )
 
     @staticmethod
     def TCReapply( intf ):
