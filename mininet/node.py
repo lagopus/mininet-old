@@ -31,7 +31,7 @@ OVSBridge: an Ethernet bridge implemented using Open vSwitch.
 
 IVSSwitch: OpenFlow switch using the Indigo Virtual Switch.
 
-Lagopus: a switch using the Laogpus OpenFlow switch (https://lagopus.github.io)
+Lagopus: a switch using the Laogpus OpenFlow switch (https://lagopus.github.io).
 
 Controller: superclass for OpenFlow controllers. The default controller
     is controller(8) from the reference implementation.
@@ -1394,7 +1394,7 @@ class Lagopus( Switch ):
         raise NotImplementedError
 
     def start( self, controllers ):
-        "Create config file and Start Lagopus"
+        "Create config file and start Lagopus"
 
         if self.bridge != None:
             self.ds_client.call("bridge %s enable\n" % self.name)
