@@ -1,9 +1,11 @@
 #!/usr/bin/python
 
 """
-Simple example of using Lagopus
+Simple example using Lagopus OpenFlow switch
 
-This creates a following network:
+This creates the following network topology with two hosts and two
+Lagopus OpenFlow switches. This script does not run an OpenFlow 1.3
+controller.
 
 +-----------+      +-----------+
 |           |      |           |
@@ -17,9 +19,7 @@ This creates a following network:
    +----+             +----+
 
 NOTE:
-OpenFlow 1.3 controller performing as
-Layer 2 switch (e.g: Ryu's simple_switch_13.py) should be
-running before starting this.
+Please run an OpenFlow 1.3 controller before you execute this script.
 
 """
 
@@ -46,7 +46,7 @@ class SimpleLagopusTopo(Topo):
         self.addLink(s2, h2)
 
 def lagopusTest():
-    "Create network with Lagopus and check connections"
+    "Create network topology with Lagopus OFS and check connections"
     topo = SimpleLagopusTopo()
 
     """ Set contoroller class in order to
@@ -56,7 +56,7 @@ def lagopusTest():
 
     net.start()
 
-    print "Checking that switches class is Lagopus"
+    print "Checking whether switch class is Lagopus"
     for s in net.switches:
         print repr(s)
 
@@ -68,6 +68,3 @@ def lagopusTest():
 if __name__ == '__main__':
     setLogLevel('info')
     lagopusTest()
-
-
-
