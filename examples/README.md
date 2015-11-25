@@ -152,11 +152,11 @@ but scratchnet shows what is going on behind the scenes.
 
 #### simplelagopus.py
 
-This example creates a simple network with lagopus switches.
+This example creates a simple network with Lagopus OpenFlow switches.
 
-Note: In the mininet, you should avoid performance tests for the lagopus switches,
-because the switches are executed in the rawsocket mode.
-
+Note: DO NOT use this script for performance evaluation.
+This script is only for functional test because the script runs
+Lagopus switches with raw-socket mode.
 
 #### simpleperf.py:
 
@@ -184,4 +184,3 @@ connectivity using `ping`, for different switch/datapath types.
 #### vlanhost.py:
 
 An example of how to subclass Host to use a VLAN on its primary interface.
-
