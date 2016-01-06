@@ -419,11 +419,11 @@ function lagopus {
              libssl-dev libpcap-dev byacc flex \
              python-dev
 
-    # Install IVS from source
+    # Install lagopus from source
     cd $BUILD_DIR
     git clone git://github.com/lagopus/lagopus $LAGOPUS_SRC --recursive
     cd $LAGOPUS_SRC
-    configure
+    $LAGOPUS_SRC/configure
     make
     sudo make install
 
