@@ -1424,7 +1424,7 @@ class Lagopus( Switch ):
             bridge_cmd += "-controller %s " % controller_name
 
         # Construct optional commands
-        bridge_cmd += "-dpid %s " % self.dpid
+        bridge_cmd += "-dpid 0x%s " % self.dpid
         bridge_cmd += "-fail-mode %s \n" % self.failMode
         self.ds_client.call(bridge_cmd)
         self.ds_client.call("bridge %s enable\n" % self.name)

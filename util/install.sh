@@ -423,7 +423,7 @@ function lagopus {
     cd $BUILD_DIR
     git clone git://github.com/lagopus/lagopus $LAGOPUS_SRC --recursive
     cd $LAGOPUS_SRC
-    $LAGOPUS_SRC/configure
+    ./configure
     make
     sudo make install
 
