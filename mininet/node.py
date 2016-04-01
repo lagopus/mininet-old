@@ -217,7 +217,7 @@ class Node( object ):
     # Subshell I/O, commands and control
 
     def read( self, maxbytes=1024 ):
-        """Buffered read from node, non-blocking.
+        """Buffered read from node, potentially blocking.
            maxbytes: maximum number of bytes to return"""
         count = len( self.readbuf )
         if count < maxbytes:
@@ -232,7 +232,7 @@ class Node( object ):
         return result
 
     def readline( self ):
-        """Buffered readline from node, non-blocking.
+        """Buffered readline from node, potentially blocking.
            returns: line (minus newline) or None"""
         self.readbuf += self.read( 1024 )
         if '\n' not in self.readbuf:
@@ -264,9 +264,10 @@ class Node( object ):
 
     def waitReadable( self, timeoutms=None ):
         """Wait until node's output is readable.
-           timeoutms: timeout in ms or None to wait indefinitely."""
+           timeoutms: timeout in ms or None to wait indefinitely.
+           returns: result of poll()"""
         if len( self.readbuf ) == 0:
-            self.pollOut.poll( timeoutms )
+            return self.pollOut.poll( timeoutms )
 
     def sendCmd( self, *args, **kwargs ):
         """Send a command, followed by a command to echo a sentinel,
@@ -308,7 +309,9 @@ class Node( object ):
            Set self.waiting to False if command has completed.
            timeoutms: timeout in ms or None to wait indefinitely
            findPid: look for PID from mnexec -p"""
-        self.waitReadable( timeoutms )
+        ready = self.waitReadable( timeoutms )
+        if not ready:
+            return ''
         data = self.read( 1024 )
         pidre = r'\[\d+\] \d+\r\n'
         # Look for PID
@@ -1030,7 +1033,7 @@ class OVSSwitch( Switch ):
                   inband=False, protocols=None,
                   reconnectms=1000, stp=False, batch=False, **params ):
         """name: name for switch
-           failMode: controller loss behavior (secure|open)
+           failMode: controller loss behavior (secure|standalone)
            datapath: userspace or kernel mode (kernel|user)
            inband: use in-band control (False)
            protocols: use specific OpenFlow version(s) (e.g. OpenFlow13)
@@ -1617,7 +1620,8 @@ class OVSController( Controller ):
     @classmethod
     def isAvailable( cls ):
         return ( quietRun( 'which ovs-controller' ) or
-                 quietRun( 'which test-controller' ) )
+                 quietRun( 'which test-controller' ) or
+                 quietRun( 'which ovs-testcontroller' ) )
 
 class NOX( Controller ):
     "Controller to run a NOX application."
